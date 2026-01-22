@@ -485,9 +485,9 @@ def login():
         <button class="btn" type="submit">Login</button>
       </form>
       <div class="muted" style="margin-top:10px;">
-        Demo users:<br>
-        <b>vijay</b> (1234), <b>samdharsi</b> (1111), <b>tushar</b> (2222), <b>member</b> (0000)
-      </div>
+          Please login with your provided credentials.
+        </div>
+
     </div>
     """
     return render(body)
@@ -1317,3 +1317,4 @@ def forbidden(e):
 # ----------------------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+
