@@ -195,8 +195,9 @@ def get_db():
         return g.db
 
     if using_postgres():
-        import psycopg2
-        conn = psycopg2.connect(DATABASE_URL)
+        import psycopg
+        conn = psycopg.connect(DATABASE_URL)
+
         conn.autocommit = True
         g.db = conn
         g.db_type = "postgres"
@@ -1365,5 +1366,6 @@ def forbidden(e):
 # ----------------------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+
 
 
