@@ -36,8 +36,8 @@ UPLOAD_CATEGORIES = ["Receipt", "Bill", "Photo", "Document", "Other"]
 USERS = {
     "vijay": {"pin": "1234", "role": "SUPER_ADMIN", "name": "Vijay"},
     "samdharsi": {"pin": "1111", "role": "BRIDE_ADMIN", "name": "Samdharsi Kumar"},
-    "tushar": {"pin": "2222", "role": "GROOM_ADMIN", "name": "Tushar Garg"},
-    "member": {"pin": "0000", "role": "MEMBER", "name": "Family Member"},
+    "nidhi": {"pin": "2222", "role": "BRIDE_ADMIN", "name": "Nidhi Sharma"},
+    "guest": {"pin": "0000", "role": "MEMBER", "name": "Family Member"},
 }
 
 ROLE_LABELS = {
@@ -2315,3 +2315,4 @@ def not_found(e):
 # ----------------------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+
