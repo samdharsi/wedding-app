@@ -2,17 +2,29 @@ import os
 import sqlite3
 from datetime import datetime
 
-from flask import Flask, request, redirect, url_for, session, render_template_string, g, abort
+from flask import (
+    Flask, request, redirect, url_for, session,
+    render_template_string, g, abort, flash
+)
 
+# ----------------------------------------------------------
+# APP CONFIG
+# ----------------------------------------------------------
 app = Flask(__name__)
 app.secret_key = os.environ.get("APP_SECRET", "wedding-secret-key-change-me")
 
 APP_TITLE = "Nidhi & Tushar Wedding"
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()  # Render Postgres URL
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 SQLITE_PATH = os.environ.get("DB_PATH", "wedding.db")
 
 STATUS_OPTIONS = ["Pending", "In Progress", "Done"]
+GUEST_SIDE_OPTIONS = ["Bride", "Groom"]
+VENDOR_CATEGORIES = [
+    "Decoration", "Caterer", "Lighting", "Power Backup",
+    "Outside Stalls", "Photo/Videographer", "Pandit Management",
+    "Makeup", "Mehendi", "Band/Baja", "Transport"
+]
 
 # ----------------------------------------------------------
 # USERS / ROLES
@@ -31,8 +43,7 @@ ROLE_LABELS = {
     "MEMBER": "Member",
 }
 
-# Members should NOT see these:
-HIDE_FOR_MEMBERS = {"purchases", "commercials"}
+HIDE_FOR_MEMBERS = {"purchases", "commercials"}  # future modules
 
 
 # ----------------------------------------------------------
@@ -46,94 +57,29 @@ BASE_HTML = """
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{title}}</title>
   <style>
-    body{
-      font-family: Arial, sans-serif;
-      background: #fffaf0;
-      margin:0;
-      padding:0;
-      color:#2b2b2b;
-    }
-    header{
-      background: linear-gradient(90deg,#b8860b,#f5deb3);
-      color:#fff;
-      padding:14px 16px;
-      font-weight:700;
-      font-size:18px;
-    }
-    .wrap{ padding:16px; max-width:1100px; margin:auto; }
-    .card{
-      background:#ffffff;
-      border:1px solid #e7d9b0;
-      border-radius:12px;
-      padding:14px;
-      margin-bottom:14px;
-      box-shadow:0 2px 10px rgba(0,0,0,0.04);
-    }
+    body{ font-family: Arial, sans-serif; background:#fffaf0; margin:0; padding:0; color:#2b2b2b; }
+    header{ background: linear-gradient(90deg,#b8860b,#f5deb3); color:#fff; padding:14px 16px; font-weight:700; font-size:18px; }
+    .wrap{ padding:16px; max-width:1200px; margin:auto; }
+    .card{ background:#fff; border:1px solid #e7d9b0; border-radius:12px; padding:14px; margin-bottom:14px; box-shadow:0 2px 10px rgba(0,0,0,0.04); }
     .row{ display:flex; gap:12px; flex-wrap:wrap; }
     .col{ flex:1; min-width:260px; }
-    .btn{
-      display:inline-block;
-      background:#b8860b;
-      color:#fff;
-      padding:10px 14px;
-      border-radius:10px;
-      text-decoration:none;
-      border:none;
-      cursor:pointer;
-      font-weight:600;
-    }
-    .btn2{
-      display:inline-block;
-      background:#fff;
-      color:#b8860b;
-      padding:10px 14px;
-      border-radius:10px;
-      text-decoration:none;
-      border:1px solid #b8860b;
-      cursor:pointer;
-      font-weight:600;
-    }
+    .btn{ display:inline-block; background:#b8860b; color:#fff; padding:10px 14px; border-radius:10px; text-decoration:none; border:none; cursor:pointer; font-weight:600; }
+    .btn2{ display:inline-block; background:#fff; color:#b8860b; padding:10px 14px; border-radius:10px; text-decoration:none; border:1px solid #b8860b; cursor:pointer; font-weight:600; }
+    .btnDanger{ display:inline-block; background:#b00020; color:#fff; padding:8px 12px; border-radius:10px; text-decoration:none; border:none; cursor:pointer; font-weight:700; }
+    .btnSmall{ padding:7px 10px; border-radius:10px; font-size:13px; }
     .muted{ color:#666; font-size:13px; }
-    .tag{
-      display:inline-block;
-      padding:4px 8px;
-      border-radius:8px;
-      background:#f7e7b6;
-      color:#6a4b00;
-      font-size:12px;
-      font-weight:700;
-    }
-    input, select, textarea{
-      width:100%;
-      padding:10px;
-      border-radius:10px;
-      border:1px solid #d9c88f;
-      margin-top:6px;
-      margin-bottom:10px;
-      box-sizing:border-box;
-      font-size:14px;
-    }
-    table{
-      width:100%;
-      border-collapse:collapse;
-      font-size:14px;
-    }
-    td,th{
-      border-bottom:1px solid #eee;
-      padding:10px 6px;
-      text-align:left;
-      vertical-align:top;
-    }
+    .tag{ display:inline-block; padding:4px 8px; border-radius:8px; background:#f7e7b6; color:#6a4b00; font-size:12px; font-weight:700; }
+    input, select, textarea{ width:100%; padding:10px; border-radius:10px; border:1px solid #d9c88f; margin-top:6px; margin-bottom:10px; box-sizing:border-box; font-size:14px; }
+    table{ width:100%; border-collapse:collapse; font-size:14px; }
+    td,th{ border-bottom:1px solid #eee; padding:10px 6px; text-align:left; vertical-align:top; }
     .right{ text-align:right; }
     .danger{ color:#b00020; font-weight:700; }
-    nav a{
-      margin-right:10px;
-      text-decoration:none;
-      color:#fff;
-      font-weight:600;
-      white-space:nowrap;
-    }
+    nav a{ margin-right:10px; text-decoration:none; color:#fff; font-weight:600; white-space:nowrap; }
     .small{ font-size:12px; }
+    .flash{ background:#e8ffe8; border:1px solid #86d786; padding:10px; border-radius:10px; margin-bottom:12px; }
+    .flashErr{ background:#ffe8e8; border:1px solid #d78686; padding:10px; border-radius:10px; margin-bottom:12px; }
+    .actions{ white-space:nowrap; }
+    .pill{ display:inline-block; padding:4px 10px; border-radius:999px; background:#f3f3f3; border:1px solid #ddd; font-size:12px; }
   </style>
 </head>
 <body>
@@ -149,45 +95,33 @@ BASE_HTML = """
         <a href="{{url_for('home')}}">Home</a>
         <a href="{{url_for('events')}}">Events</a>
         <a href="{{url_for('guests')}}">Guests</a>
-        <a href="{{url_for('travel')}}">Travel</a>
-        <a href="{{url_for('venue_rooms')}}">Venue/Rooms</a>
         <a href="{{url_for('vendors')}}">Vendors</a>
-
-        {% if user["role"] != "MEMBER" %}
-          <a href="{{url_for('purchases')}}">Purchases</a>
-        {% endif %}
-
-        {% if user["role"] == "SUPER_ADMIN" %}
-          <a href="{{url_for('commercials')}}">Commercials</a>
-        {% endif %}
+        <a href="{{url_for('venue_rooms')}}">Venue/Rooms</a>
       </nav>
     </div>
   {% endif %}
 </header>
 
 <div class="wrap">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for cat,msg in messages %}
+        <div class="{{'flashErr' if cat=='error' else 'flash'}}">{{msg}}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
   {{body|safe}}
 </div>
-
 </body>
 </html>
 """
 
 
 # ----------------------------------------------------------
-# DB helpers (SQLite + Postgres)
+# DB Helpers (SQLite / Postgres via psycopg3)
 # ----------------------------------------------------------
 def using_postgres():
     return bool(DATABASE_URL)
-
-
-def _ph(sql: str) -> str:
-    """
-    Convert SQLite placeholders (?) to Postgres placeholders (%s) if needed.
-    """
-    if not using_postgres():
-        return sql
-    return sql.replace("?", "%s")
 
 
 def get_db():
@@ -200,13 +134,13 @@ def get_db():
         conn.autocommit = True
         g.db = conn
         g.db_type = "postgres"
-        return conn
+    else:
+        conn = sqlite3.connect(SQLITE_PATH)
+        conn.row_factory = sqlite3.Row
+        g.db = conn
+        g.db_type = "sqlite"
 
-    conn = sqlite3.connect(SQLITE_PATH)
-    conn.row_factory = sqlite3.Row
-    g.db = conn
-    g.db_type = "sqlite"
-    return conn
+    return g.db
 
 
 @app.teardown_appcontext
@@ -219,10 +153,13 @@ def close_db(exception=None):
             pass
 
 
+def _ph():
+    # placeholder style
+    return "%s" if using_postgres() else "?"
+
+
 def db_exec(sql, params=()):
     db = get_db()
-    sql = _ph(sql)
-
     if g.get("db_type") == "sqlite":
         cur = db.execute(sql, params)
         db.commit()
@@ -235,7 +172,6 @@ def db_exec(sql, params=()):
 
 def db_query(sql, params=()):
     db = get_db()
-    sql = _ph(sql)
 
     if g.get("db_type") == "sqlite":
         cur = db.execute(sql, params)
@@ -252,15 +188,12 @@ def db_query(sql, params=()):
 
 
 def sql_pk():
-    return "SERIAL PRIMARY KEY" if using_postgres() else "INTEGER PRIMARY KEY AUTOINCREMENT"
-
-
-def sql_int():
-    return "INTEGER"
+    if using_postgres():
+        return "INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY"
+    return "INTEGER PRIMARY KEY AUTOINCREMENT"
 
 
 def init_db():
-    # EVENTS
     db_exec(f"""
     CREATE TABLE IF NOT EXISTS events (
         id {sql_pk()},
@@ -275,7 +208,6 @@ def init_db():
     )
     """)
 
-    # GUESTS
     db_exec(f"""
     CREATE TABLE IF NOT EXISTS guests (
         id {sql_pk()},
@@ -283,8 +215,8 @@ def init_db():
         name TEXT NOT NULL,
         relation TEXT,
         phone TEXT,
-        visited {sql_int()} DEFAULT 0,
-        stay_required {sql_int()} DEFAULT 0,
+        visited INTEGER DEFAULT 0,
+        stay_required INTEGER DEFAULT 0,
         room_no TEXT,
         notes TEXT,
         created_by TEXT,
@@ -292,43 +224,6 @@ def init_db():
     )
     """)
 
-    # TRAVEL
-    db_exec(f"""
-    CREATE TABLE IF NOT EXISTS travel (
-        id {sql_pk()},
-        guest_id {sql_int()} NOT NULL,
-        arrival_date TEXT,
-        arrival_time TEXT,
-        mode TEXT,
-        ref_no TEXT,
-        pickup_required {sql_int()} DEFAULT 0,
-        pickup_person TEXT,
-        vehicle TEXT,
-        checkin_date TEXT,
-        checkout_date TEXT,
-        status TEXT,
-        assigned_to TEXT,
-        notes TEXT,
-        updated_at TEXT
-    )
-    """)
-
-    # VENUE ROOMS
-    db_exec(f"""
-    CREATE TABLE IF NOT EXISTS venue_rooms (
-        id {sql_pk()},
-        room_no TEXT,
-        guest_name TEXT,
-        checkin TEXT,
-        checkout TEXT,
-        status TEXT,
-        assigned_to TEXT,
-        notes TEXT,
-        updated_at TEXT
-    )
-    """)
-
-    # VENDORS
     db_exec(f"""
     CREATE TABLE IF NOT EXISTS vendors (
         id {sql_pk()},
@@ -343,57 +238,49 @@ def init_db():
     )
     """)
 
-    # PURCHASES
     db_exec(f"""
-    CREATE TABLE IF NOT EXISTS purchases (
+    CREATE TABLE IF NOT EXISTS venue_rooms (
         id {sql_pk()},
-        category TEXT NOT NULL,
-        item TEXT NOT NULL,
+        room_no TEXT,
+        guest_name TEXT,
+        checkin TEXT,
+        checkout TEXT,
         status TEXT,
+        assigned_to TEXT,
         notes TEXT,
         updated_at TEXT
     )
     """)
 
-    # COMMERCIALS
-    db_exec(f"""
-    CREATE TABLE IF NOT EXISTS commercials (
-        id {sql_pk()},
-        category TEXT NOT NULL,
-        amount REAL NOT NULL,
-        notes TEXT,
-        updated_at TEXT
-    )
-    """)
-
-    # Seed
-    if len(db_query("SELECT id FROM events LIMIT 1")) == 0:
+    # seed events
+    existing = db_query("SELECT id FROM events LIMIT 1")
+    if len(existing) == 0:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        db_exec("""
-            INSERT INTO events (title, date, time, notes, assigned_to, status, created_by, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, ("Venue Finalisation", "2026-01-25", "11:00", "Finalize venue and booking confirmation.", "Vijay", "Pending", "SYSTEM", now))
+        db_exec(
+            f"INSERT INTO events (title, date, time, notes, assigned_to, status, created_by, updated_at) "
+            f"VALUES ({_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()})",
+            ("Venue Finalisation", "2026-01-25", "11:00", "Finalize venue and booking confirmation.", "Vijay", "Pending", "SYSTEM", now),
+        )
 
-        db_exec("""
-            INSERT INTO events (title, date, time, notes, assigned_to, status, created_by, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, ("Purchasing Plan (Clothes & Jewellery)", "2026-01-28", "16:00", "List items and confirm vendors.", "Vijay", "Pending", "SYSTEM", now))
-
-    if len(db_query("SELECT id FROM vendors LIMIT 1")) == 0:
+    # seed vendors
+    vend = db_query("SELECT id FROM vendors LIMIT 1")
+    if len(vend) == 0:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        default_vendors = [
-            "Decoration", "Caterer", "Lighting", "Power Backup", "Outside Stalls",
-            "Photo/Videographer", "Pandit Management"
-        ]
-        for cat in default_vendors:
-            db_exec("""
-                INSERT INTO vendors (category, vendor_name, contact_person, phone, status, assigned_to, notes, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (cat, "", "", "", "Pending", "Vijay", "", now))
+        for cat in VENDOR_CATEGORIES:
+            db_exec(
+                f"INSERT INTO vendors (category, vendor_name, contact_person, phone, status, assigned_to, notes, updated_at) "
+                f"VALUES ({_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()})",
+                (cat, "", "", "", "Pending", "Vijay", "", now),
+            )
+
+
+@app.before_request
+def before_request():
+    init_db()
 
 
 # ----------------------------------------------------------
-# Auth helpers
+# Auth
 # ----------------------------------------------------------
 def current_user():
     u = session.get("user")
@@ -412,10 +299,9 @@ def is_admin(role):
     return role in ("SUPER_ADMIN", "BRIDE_ADMIN", "GROOM_ADMIN")
 
 
-def deny_members(route_name):
-    user = current_user()
-    if user and user["role"] == "MEMBER" and route_name in HIDE_FOR_MEMBERS:
-        abort(403)
+def can_delete(role):
+    # As per your choice: B) Bride/Groom Admin can delete too
+    return role in ("SUPER_ADMIN", "BRIDE_ADMIN", "GROOM_ADMIN")
 
 
 def render(body_html):
@@ -424,13 +310,15 @@ def render(body_html):
     return render_template_string(BASE_HTML, title=APP_TITLE, body=body_html, user=user, role_label=role_label)
 
 
-@app.before_request
-def before_request():
-    init_db()
+def safe_int(v, default=0):
+    try:
+        return int(v)
+    except:
+        return default
 
 
 # ----------------------------------------------------------
-# Routes
+# ROUTES
 # ----------------------------------------------------------
 @app.route("/")
 def home():
@@ -441,13 +329,17 @@ def home():
     user = current_user()
     role = user["role"]
 
-    upcoming = db_query("""
-        SELECT * FROM events
-        ORDER BY date ASC, time ASC
-        LIMIT 10
-    """)
+    upcoming = db_query("SELECT * FROM events ORDER BY date ASC, time ASC LIMIT 8")
+    guests_count = db_query("SELECT COUNT(*) AS c FROM guests")
+    vendors_count = db_query("SELECT COUNT(*) AS c FROM vendors")
+    rooms_count = db_query("SELECT COUNT(*) AS c FROM venue_rooms")
 
-    storage = "PostgreSQL (Permanent)" if using_postgres() else "SQLite (Local)"
+    def _get_count(rows):
+        if not rows:
+            return 0
+        if isinstance(rows[0], dict):
+            return rows[0].get("c", 0)
+        return rows[0]["c"]
 
     body = f"""
     <div class="card">
@@ -457,23 +349,15 @@ def home():
           <div class="muted">Wedding planning dashboard</div>
           <div style="margin-top:10px;">
             <span class="tag">{ROLE_LABELS.get(role)}</span>
-          </div>
-          <div class="muted small" style="margin-top:8px;">
-            Storage: <b>{storage}</b>
+            <span class="pill">Storage: {"PostgreSQL Permanent" if using_postgres() else "SQLite Local"}</span>
           </div>
         </div>
         <div class="col">
-          <h3 style="margin:0;">Quick Actions</h3>
+          <h3 style="margin:0;">Summary</h3>
           <div style="margin-top:10px;">
-            <a class="btn" href="{url_for('events')}">📅 Events</a>
-            <a class="btn2" href="{url_for('guests')}">👥 Guests</a>
-          </div>
-          <div style="margin-top:10px;">
-            <a class="btn2" href="{url_for('travel')}">🧳 Travel</a>
-            <a class="btn2" href="{url_for('venue_rooms')}">🏨 Rooms</a>
-          </div>
-          <div style="margin-top:10px;">
-            <a class="btn2" href="{url_for('vendors')}">🧑‍🔧 Vendors</a>
+            👥 Guests: <b>{_get_count(guests_count)}</b><br>
+            🧑‍🔧 Vendors: <b>{_get_count(vendors_count)}</b><br>
+            🏨 Rooms: <b>{_get_count(rooms_count)}</b>
           </div>
         </div>
       </div>
@@ -482,9 +366,7 @@ def home():
     <div class="card">
       <h3 style="margin-top:0;">Upcoming Events</h3>
       <table>
-        <tr>
-          <th>When</th><th>Title</th><th>Status</th><th>Assigned</th><th>Notes</th>
-        </tr>
+        <tr><th>When</th><th>Title</th><th>Status</th><th>Assigned</th></tr>
     """
 
     for e in upcoming:
@@ -492,13 +374,12 @@ def home():
         <tr>
           <td>{e['date']} {e['time']}</td>
           <td><b>{e['title']}</b></td>
-          <td><span class="tag">{e['status']}</span></td>
-          <td class="muted">{e.get('assigned_to') or ''}</td>
-          <td class="muted">{e.get('notes') or ''}</td>
+          <td><span class="tag">{e.get('status','')}</span></td>
+          <td class="muted">{e.get('assigned_to','')}</td>
         </tr>
         """
-
     body += "</table></div>"
+
     return render(body)
 
 
@@ -510,20 +391,8 @@ def login():
 
         u = USERS.get(username)
         if not u or u["pin"] != pin:
-            body = """
-            <div class="card">
-              <h2>Login</h2>
-              <p class="danger">Invalid username or PIN</p>
-              <form method="post">
-                <label>Username</label>
-                <input name="username" required>
-                <label>PIN</label>
-                <input name="pin" type="password" required>
-                <button class="btn" type="submit">Login</button>
-              </form>
-            </div>
-            """
-            return render(body)
+            flash("Invalid username or PIN", "error")
+            return redirect(url_for("login"))
 
         session["user"] = username
         return redirect(url_for("home"))
@@ -534,9 +403,9 @@ def login():
       <p class="muted">Please login with your provided credentials.</p>
       <form method="post">
         <label>Username</label>
-        <input name="username" placeholder="Enter username" required>
+        <input name="username" required>
         <label>PIN</label>
-        <input name="pin" type="password" placeholder="****" required>
+        <input name="pin" type="password" required>
         <button class="btn" type="submit">Login</button>
       </form>
     </div>
@@ -550,7 +419,9 @@ def logout():
     return redirect(url_for("login"))
 
 
-# ------------------------- EVENTS -------------------------
+# ==========================================================
+# EVENTS (Add / Edit / Delete)
+# ==========================================================
 @app.route("/events", methods=["GET", "POST"])
 def events():
     r = require_login()
@@ -562,7 +433,8 @@ def events():
 
     if request.method == "POST":
         if not is_admin(role):
-            return render("<div class='card'><h2>Events</h2><p class='danger'>Only Admins can add events.</p></div>")
+            flash("Only Admins can add events.", "error")
+            return redirect(url_for("events"))
 
         title = request.form.get("title", "").strip()
         date_ = request.form.get("date", "").strip()
@@ -571,12 +443,17 @@ def events():
         assigned_to = request.form.get("assigned_to", "").strip()
         status = request.form.get("status", "Pending").strip()
 
-        if title and date_ and time_:
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            db_exec("""
-                INSERT INTO events (title, date, time, notes, assigned_to, status, created_by, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (title, date_, time_, notes, assigned_to, status, user["name"], now))
+        if not title or not date_ or not time_:
+            flash("Title/Date/Time are required.", "error")
+            return redirect(url_for("events"))
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        db_exec(
+            f"INSERT INTO events (title, date, time, notes, assigned_to, status, created_by, updated_at) "
+            f"VALUES ({_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()})",
+            (title, date_, time_, notes, assigned_to, status, user["name"], now),
+        )
+        flash("Event added successfully ✅")
         return redirect(url_for("events"))
 
     rows = db_query("SELECT * FROM events ORDER BY date ASC, time ASC")
@@ -584,18 +461,23 @@ def events():
     body = """
     <div class="card">
       <h2 style="margin-top:0;">📅 Events & Schedule</h2>
-      <p class="muted">Admins can add events. Track progress using Assigned To + Status.</p>
       <table>
-        <tr><th>When</th><th>Title</th><th>Status</th><th>Assigned</th><th>Notes</th></tr>
+        <tr>
+          <th>When</th><th>Title</th><th>Status</th><th>Assigned</th><th>Notes</th><th class="right">Actions</th>
+        </tr>
     """
     for e in rows:
         body += f"""
         <tr>
           <td>{e['date']} {e['time']}</td>
           <td><b>{e['title']}</b></td>
-          <td><span class="tag">{e['status']}</span></td>
+          <td><span class="tag">{e.get('status','')}</span></td>
           <td class="muted">{e.get('assigned_to') or ''}</td>
-          <td class="muted">{e.get('notes') or ''}</td>
+          <td class="muted">{(e.get('notes') or '')[:80]}</td>
+          <td class="right actions">
+            <a class="btn2 btnSmall" href="{url_for('edit_event', event_id=e['id'])}">Edit</a>
+            <a class="btnDanger btnSmall" href="{url_for('delete_event', event_id=e['id'])}" onclick="return confirm('Delete this event?')">Delete</a>
+          </td>
         </tr>
         """
     body += "</table></div>"
@@ -604,11 +486,10 @@ def events():
         opts = "".join([f"<option>{s}</option>" for s in STATUS_OPTIONS])
         body += f"""
         <div class="card">
-          <h3 style="margin-top:0;">➕ Add Event (Admin)</h3>
+          <h3 style="margin-top:0;">➕ Add Event</h3>
           <form method="post">
             <label>Title</label>
-            <input name="title" placeholder="e.g., Haldi, Venue check-in, Shopping" required>
-
+            <input name="title" required>
             <div class="row">
               <div class="col">
                 <label>Date</label>
@@ -619,32 +500,117 @@ def events():
                 <input name="time" type="time" required>
               </div>
             </div>
-
             <div class="row">
               <div class="col">
                 <label>Assigned To</label>
-                <input name="assigned_to" placeholder="Vijay / Samdharsi / Tushar / Other">
+                <input name="assigned_to">
               </div>
               <div class="col">
                 <label>Status</label>
                 <select name="status">{opts}</select>
               </div>
             </div>
-
             <label>Notes</label>
-            <textarea name="notes" placeholder="Optional notes..."></textarea>
-
+            <textarea name="notes"></textarea>
             <button class="btn" type="submit">Add Event</button>
           </form>
         </div>
         """
     else:
-        body += "<div class='card'><p class='muted'>You have view-only access.</p></div>"
+        body += "<div class='card'><p class='muted'>Member view only.</p></div>"
 
     return render(body)
 
 
-# ------------------------- GUESTS -------------------------
+@app.route("/events/<int:event_id>/edit", methods=["GET", "POST"])
+def edit_event(event_id):
+    r = require_login()
+    if r:
+        return r
+
+    user = current_user()
+    if not is_admin(user["role"]):
+        abort(403)
+
+    rows = db_query(f"SELECT * FROM events WHERE id={_ph()}", (event_id,))
+    if not rows:
+        flash("Event not found", "error")
+        return redirect(url_for("events"))
+    e = rows[0]
+
+    if request.method == "POST":
+        title = request.form.get("title", "").strip()
+        date_ = request.form.get("date", "").strip()
+        time_ = request.form.get("time", "").strip()
+        notes = request.form.get("notes", "").strip()
+        assigned_to = request.form.get("assigned_to", "").strip()
+        status = request.form.get("status", "Pending").strip()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        db_exec(
+            f"UPDATE events SET title={_ph()}, date={_ph()}, time={_ph()}, notes={_ph()}, assigned_to={_ph()}, status={_ph()}, updated_at={_ph()} "
+            f"WHERE id={_ph()}",
+            (title, date_, time_, notes, assigned_to, status, now, event_id),
+        )
+        flash("Event updated ✅")
+        return redirect(url_for("events"))
+
+    opts = "".join([f"<option {'selected' if s==(e.get('status') or '') else ''}>{s}</option>" for s in STATUS_OPTIONS])
+
+    body = f"""
+    <div class="card">
+      <h2 style="margin-top:0;">✏️ Edit Event</h2>
+      <form method="post">
+        <label>Title</label>
+        <input name="title" value="{e.get('title','')}" required>
+        <div class="row">
+          <div class="col">
+            <label>Date</label>
+            <input name="date" type="date" value="{e.get('date','')}" required>
+          </div>
+          <div class="col">
+            <label>Time</label>
+            <input name="time" type="time" value="{e.get('time','')}" required>
+          </div>
+        </div>
+        <div class="row">
+          <div class="col">
+            <label>Assigned To</label>
+            <input name="assigned_to" value="{e.get('assigned_to') or ''}">
+          </div>
+          <div class="col">
+            <label>Status</label>
+            <select name="status">{opts}</select>
+          </div>
+        </div>
+        <label>Notes</label>
+        <textarea name="notes">{e.get('notes') or ''}</textarea>
+        <button class="btn" type="submit">Save</button>
+        <a class="btn2" href="{url_for('events')}">Cancel</a>
+      </form>
+    </div>
+    """
+    return render(body)
+
+
+@app.route("/events/<int:event_id>/delete")
+def delete_event(event_id):
+    r = require_login()
+    if r:
+        return r
+
+    user = current_user()
+    if not can_delete(user["role"]):
+        abort(403)
+
+    db_exec(f"DELETE FROM events WHERE id={_ph()}", (event_id,))
+    flash("Event deleted 🗑️")
+    return redirect(url_for("events"))
+
+
+# ==========================================================
+# GUESTS (Add / Edit / Delete)
+# ==========================================================
 @app.route("/guests", methods=["GET", "POST"])
 def guests():
     r = require_login()
@@ -655,441 +621,222 @@ def guests():
     role = user["role"]
 
     if request.method == "POST":
-        action = request.form.get("action", "")
-
-        if action == "add":
-            if not is_admin(role):
-                return render("<div class='card'><h2>Guests</h2><p class='danger'>Only Admins can add guests.</p></div>")
-
-            side = request.form.get("side", "BRIDE").strip().upper()
-            name = request.form.get("name", "").strip()
-            relation = request.form.get("relation", "").strip()
-            phone = request.form.get("phone", "").strip()
-            stay_required = 1 if request.form.get("stay_required") == "on" else 0
-            room_no = request.form.get("room_no", "").strip()
-            notes = request.form.get("notes", "").strip()
-
-            if name:
-                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                db_exec("""
-                    INSERT INTO guests (side, name, relation, phone, visited, stay_required, room_no, notes, created_by, updated_at)
-                    VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
-                """, (side, name, relation, phone, stay_required, room_no, notes, user["name"], now))
+        if not is_admin(role):
+            flash("Only Admins can add guests.", "error")
             return redirect(url_for("guests"))
 
-        if action == "toggle_visit":
-            gid = int(request.form.get("gid"))
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            db_exec("""
-                UPDATE guests
-                SET visited = CASE visited WHEN 1 THEN 0 ELSE 1 END,
-                    updated_at = ?
-                WHERE id = ?
-            """, (now, gid))
+        side = request.form.get("side", "Bride").strip()
+        name = request.form.get("name", "").strip()
+        relation = request.form.get("relation", "").strip()
+        phone = request.form.get("phone", "").strip()
+        visited = 1 if request.form.get("visited") == "on" else 0
+        stay_required = 1 if request.form.get("stay_required") == "on" else 0
+        room_no = request.form.get("room_no", "").strip()
+        notes = request.form.get("notes", "").strip()
+
+        if not name:
+            flash("Guest name is required.", "error")
             return redirect(url_for("guests"))
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        db_exec(
+            f"INSERT INTO guests (side, name, relation, phone, visited, stay_required, room_no, notes, created_by, updated_at) "
+            f"VALUES ({_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()})",
+            (side, name, relation, phone, visited, stay_required, room_no, notes, user["name"], now),
+        )
+        flash("Guest added ✅")
+        return redirect(url_for("guests"))
 
     rows = db_query("SELECT * FROM guests ORDER BY side ASC, name ASC")
-    bride = [g for g in rows if g["side"] == "BRIDE"]
-    groom = [g for g in rows if g["side"] == "GROOM"]
-
-    def guest_table(title, items):
-        html = f"""
-        <div class="card">
-          <h3 style="margin-top:0;">{title}</h3>
-          <table>
-            <tr><th>Name</th><th>Relation</th><th>Stay</th><th>Room</th><th>Visited</th><th class="right">Action</th></tr>
-        """
-        for g1 in items:
-            visited = "✅" if g1["visited"] else "—"
-            stay = "Yes" if g1["stay_required"] else "No"
-            html += f"""
-            <tr>
-              <td><b>{g1['name']}</b><div class="muted small">{g1.get('phone') or ''}</div></td>
-              <td class="muted">{g1.get('relation') or ''}</td>
-              <td>{stay}</td>
-              <td class="muted">{g1.get('room_no') or ''}</td>
-              <td>{visited}</td>
-              <td class="right">
-                <form method="post" style="margin:0;">
-                  <input type="hidden" name="action" value="toggle_visit">
-                  <input type="hidden" name="gid" value="{g1['id']}">
-                  <button class="btn2" type="submit">Toggle</button>
-                </form>
-              </td>
-            </tr>
-            """
-        html += "</table></div>"
-        return html
 
     body = """
     <div class="card">
-      <h2 style="margin-top:0;">👥 Guest Management</h2>
-      <p class="muted">Guests are separated Bride-side / Groom-side. Travel is managed guest-wise in Travel section.</p>
-    </div>
-    <div class="row">
-      <div class="col">
+      <h2 style="margin-top:0;">👥 Guest List</h2>
+      <table>
+        <tr>
+          <th>Side</th><th>Name</th><th>Relation</th><th>Phone</th>
+          <th>Visited</th><th>Stay</th><th>Room</th><th>Notes</th><th class="right">Actions</th>
+        </tr>
     """
-    body += guest_table("Bride Side", bride)
-    body += """
-      </div>
-      <div class="col">
-    """
-    body += guest_table("Groom Side", groom)
-    body += """
-      </div>
-    </div>
-    """
+    for g1 in rows:
+        visited = "✅" if safe_int(g1.get("visited", 0)) == 1 else "—"
+        stay = "🏨" if safe_int(g1.get("stay_required", 0)) == 1 else "—"
+        body += f"""
+        <tr>
+          <td><span class="tag">{g1.get('side','')}</span></td>
+          <td><b>{g1.get('name','')}</b></td>
+          <td class="muted">{g1.get('relation') or ''}</td>
+          <td class="muted">{g1.get('phone') or ''}</td>
+          <td>{visited}</td>
+          <td>{stay}</td>
+          <td class="muted">{g1.get('room_no') or ''}</td>
+          <td class="muted">{(g1.get('notes') or '')[:60]}</td>
+          <td class="right actions">
+            <a class="btn2 btnSmall" href="{url_for('edit_guest', guest_id=g1['id'])}">Edit</a>
+            <a class="btnDanger btnSmall" href="{url_for('delete_guest', guest_id=g1['id'])}" onclick="return confirm('Delete this guest?')">Delete</a>
+          </td>
+        </tr>
+        """
+    body += "</table></div>"
 
     if is_admin(role):
-        body += """
+        side_opts = "".join([f"<option>{s}</option>" for s in GUEST_SIDE_OPTIONS])
+        body += f"""
         <div class="card">
-          <h3 style="margin-top:0;">➕ Add Guest (Admin)</h3>
+          <h3 style="margin-top:0;">➕ Add Guest</h3>
           <form method="post">
-            <input type="hidden" name="action" value="add">
-
-            <label>Side</label>
-            <select name="side">
-              <option value="BRIDE">Bride Side</option>
-              <option value="GROOM">Groom Side</option>
-            </select>
-
-            <label>Name</label>
-            <input name="name" placeholder="Guest name" required>
-
+            <div class="row">
+              <div class="col">
+                <label>Side</label>
+                <select name="side">{side_opts}</select>
+              </div>
+              <div class="col">
+                <label>Name</label>
+                <input name="name" required>
+              </div>
+            </div>
             <div class="row">
               <div class="col">
                 <label>Relation</label>
-                <input name="relation" placeholder="e.g., Uncle, Friend, Cousin">
+                <input name="relation">
               </div>
               <div class="col">
-                <label>Phone (optional)</label>
-                <input name="phone" placeholder="+91...">
+                <label>Phone</label>
+                <input name="phone">
               </div>
             </div>
 
-            <label>Stay Required?</label>
-            <input type="checkbox" name="stay_required"> Yes
+            <div class="row">
+              <div class="col">
+                <label><input type="checkbox" name="visited"> Visited</label>
+              </div>
+              <div class="col">
+                <label><input type="checkbox" name="stay_required"> Stay Required</label>
+              </div>
+            </div>
 
-            <label>Room No (optional)</label>
-            <input name="room_no" placeholder="e.g., 101 / A-12">
+            <label>Room No</label>
+            <input name="room_no">
 
             <label>Notes</label>
-            <input name="notes" placeholder="Optional notes...">
+            <textarea name="notes"></textarea>
 
             <button class="btn" type="submit">Add Guest</button>
           </form>
         </div>
         """
     else:
-        body += "<div class='card'><p class='muted'>You have view-only access.</p></div>"
+        body += "<div class='card'><p class='muted'>Member view only.</p></div>"
 
     return render(body)
 
 
-# ------------------------- TRAVEL -------------------------
-@app.route("/travel", methods=["GET", "POST"])
-def travel():
+@app.route("/guests/<int:guest_id>/edit", methods=["GET", "POST"])
+def edit_guest(guest_id):
     r = require_login()
     if r:
         return r
 
     user = current_user()
-    role = user["role"]
+    if not is_admin(user["role"]):
+        abort(403)
+
+    rows = db_query(f"SELECT * FROM guests WHERE id={_ph()}", (guest_id,))
+    if not rows:
+        flash("Guest not found", "error")
+        return redirect(url_for("guests"))
+    g1 = rows[0]
 
     if request.method == "POST":
-        if not is_admin(role):
-            return render("<div class='card'><h2>Travel</h2><p class='danger'>Only Admins can update travel details.</p></div>")
-
-        guest_id = int(request.form.get("guest_id"))
-        arrival_date = request.form.get("arrival_date", "").strip()
-        arrival_time = request.form.get("arrival_time", "").strip()
-        mode = request.form.get("mode", "").strip()
-        ref_no = request.form.get("ref_no", "").strip()
-        pickup_required = 1 if request.form.get("pickup_required") == "on" else 0
-        pickup_person = request.form.get("pickup_person", "").strip()
-        vehicle = request.form.get("vehicle", "").strip()
-        checkin_date = request.form.get("checkin_date", "").strip()
-        checkout_date = request.form.get("checkout_date", "").strip()
-        status = request.form.get("status", "Pending").strip()
-        assigned_to = request.form.get("assigned_to", "").strip()
-        notes = request.form.get("notes", "").strip()
-
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        existing = db_query("SELECT id FROM travel WHERE guest_id = ?", (guest_id,))
-        if existing:
-            db_exec("""
-                UPDATE travel
-                SET arrival_date=?, arrival_time=?, mode=?, ref_no=?, pickup_required=?, pickup_person=?, vehicle=?,
-                    checkin_date=?, checkout_date=?, status=?, assigned_to=?, notes=?, updated_at=?
-                WHERE guest_id=?
-            """, (arrival_date, arrival_time, mode, ref_no, pickup_required, pickup_person, vehicle,
-                  checkin_date, checkout_date, status, assigned_to, notes, now, guest_id))
-        else:
-            db_exec("""
-                INSERT INTO travel (guest_id, arrival_date, arrival_time, mode, ref_no, pickup_required, pickup_person, vehicle,
-                                   checkin_date, checkout_date, status, assigned_to, notes, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (guest_id, arrival_date, arrival_time, mode, ref_no, pickup_required, pickup_person, vehicle,
-                  checkin_date, checkout_date, status, assigned_to, notes, now))
-
-        return redirect(url_for("travel"))
-
-    guests_rows = db_query("SELECT * FROM guests ORDER BY side ASC, name ASC")
-    travel_rows = db_query("""
-        SELECT t.*, g.name as guest_name, g.side as guest_side
-        FROM travel t
-        JOIN guests g ON g.id = t.guest_id
-        ORDER BY g.side ASC, g.name ASC
-    """)
-
-    travel_map = {r["guest_id"]: r for r in travel_rows}
-
-    body = """
-    <div class="card">
-      <h2 style="margin-top:0;">🧳 Guest-wise Travel & Stay</h2>
-      <p class="muted">Each guest can have arrival details, pickup, and stay schedule. Admins can update.</p>
-    </div>
-    """
-
-    body += """
-    <div class="card">
-      <h3 style="margin-top:0;">Travel Summary</h3>
-      <table>
-        <tr>
-          <th>Guest</th><th>Arrival</th><th>Pickup</th><th>Stay</th><th>Status</th><th>Assigned</th><th>Notes</th>
-        </tr>
-    """
-    for g1 in guests_rows:
-        t = travel_map.get(g1["id"])
-        if t:
-            arrival = f"{t.get('arrival_date') or ''} {t.get('arrival_time') or ''} ({t.get('mode') or ''}) {t.get('ref_no') or ''}"
-            pickup = "Yes" if t.get("pickup_required") else "No"
-            stay = f"{t.get('checkin_date') or ''} → {t.get('checkout_date') or ''}"
-            status = t.get("status") or "Pending"
-            assigned = t.get("assigned_to") or ""
-            notes = t.get("notes") or ""
-        else:
-            arrival = "—"
-            pickup = "—"
-            stay = "—"
-            status = "Pending"
-            assigned = ""
-            notes = ""
-        body += f"""
-        <tr>
-          <td><b>{g1['name']}</b><div class="muted small">{g1['side']}</div></td>
-          <td class="muted">{arrival}</td>
-          <td>{pickup}</td>
-          <td class="muted">{stay}</td>
-          <td><span class="tag">{status}</span></td>
-          <td class="muted">{assigned}</td>
-          <td class="muted">{notes}</td>
-        </tr>
-        """
-    body += "</table></div>"
-
-    if is_admin(role):
-        opts = "".join([f"<option>{s}</option>" for s in STATUS_OPTIONS])
-        guest_opts = "".join([f"<option value='{g2['id']}'>{g2['name']} ({g2['side']})</option>" for g2 in guests_rows])
-
-        body += f"""
-        <div class="card">
-          <h3 style="margin-top:0;">➕ Add / Update Travel (Admin)</h3>
-          <form method="post">
-            <label>Guest</label>
-            <select name="guest_id" required>
-              {guest_opts}
-            </select>
-
-            <div class="row">
-              <div class="col">
-                <label>Arrival Date</label>
-                <input name="arrival_date" type="date">
-              </div>
-              <div class="col">
-                <label>Arrival Time</label>
-                <input name="arrival_time" type="time">
-              </div>
-            </div>
-
-            <div class="row">
-              <div class="col">
-                <label>Mode</label>
-                <select name="mode">
-                  <option value="">--</option>
-                  <option>Train</option>
-                  <option>Flight</option>
-                  <option>Car</option>
-                  <option>Bus</option>
-                  <option>Other</option>
-                </select>
-              </div>
-              <div class="col">
-                <label>Ref No (Train/Flight No)</label>
-                <input name="ref_no" placeholder="e.g., 12951 / AI-101">
-              </div>
-            </div>
-
-            <label>Pickup Required?</label>
-            <input type="checkbox" name="pickup_required"> Yes
-
-            <div class="row">
-              <div class="col">
-                <label>Pickup Person</label>
-                <input name="pickup_person" placeholder="Who will pickup?">
-              </div>
-              <div class="col">
-                <label>Vehicle</label>
-                <input name="vehicle" placeholder="Car/Driver details">
-              </div>
-            </div>
-
-            <div class="row">
-              <div class="col">
-                <label>Check-in Date</label>
-                <input name="checkin_date" type="date">
-              </div>
-              <div class="col">
-                <label>Check-out Date</label>
-                <input name="checkout_date" type="date">
-              </div>
-            </div>
-
-            <div class="row">
-              <div class="col">
-                <label>Status</label>
-                <select name="status">{opts}</select>
-              </div>
-              <div class="col">
-                <label>Assigned To</label>
-                <input name="assigned_to" placeholder="Vijay / Samdharsi / Tushar / Other">
-              </div>
-            </div>
-
-            <label>Notes</label>
-            <input name="notes" placeholder="Food preference / special needs / remarks">
-
-            <button class="btn" type="submit">Save Travel</button>
-          </form>
-        </div>
-        """
-    else:
-        body += "<div class='card'><p class='muted'>You have view-only access.</p></div>"
-
-    return render(body)
-
-
-# ------------------------- VENUE / ROOMS -------------------------
-@app.route("/venue_rooms", methods=["GET", "POST"])
-def venue_rooms():
-    r = require_login()
-    if r:
-        return r
-
-    user = current_user()
-    role = user["role"]
-
-    if request.method == "POST":
-        if not is_admin(role):
-            return render("<div class='card'><h2>Venue/Rooms</h2><p class='danger'>Only Admins can update rooms.</p></div>")
-
+        side = request.form.get("side", "Bride").strip()
+        name = request.form.get("name", "").strip()
+        relation = request.form.get("relation", "").strip()
+        phone = request.form.get("phone", "").strip()
+        visited = 1 if request.form.get("visited") == "on" else 0
+        stay_required = 1 if request.form.get("stay_required") == "on" else 0
         room_no = request.form.get("room_no", "").strip()
-        guest_name = request.form.get("guest_name", "").strip()
-        checkin = request.form.get("checkin", "").strip()
-        checkout = request.form.get("checkout", "").strip()
-        status = request.form.get("status", "Pending").strip()
-        assigned_to = request.form.get("assigned_to", "").strip()
         notes = request.form.get("notes", "").strip()
-
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        db_exec("""
-            INSERT INTO venue_rooms (room_no, guest_name, checkin, checkout, status, assigned_to, notes, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (room_no, guest_name, checkin, checkout, status, assigned_to, notes, now))
 
-        return redirect(url_for("venue_rooms"))
+        db_exec(
+            f"UPDATE guests SET side={_ph()}, name={_ph()}, relation={_ph()}, phone={_ph()}, visited={_ph()}, stay_required={_ph()}, room_no={_ph()}, notes={_ph()}, updated_at={_ph()} "
+            f"WHERE id={_ph()}",
+            (side, name, relation, phone, visited, stay_required, room_no, notes, now, guest_id),
+        )
+        flash("Guest updated ✅")
+        return redirect(url_for("guests"))
 
-    rows = db_query("SELECT * FROM venue_rooms ORDER BY id DESC")
+    side_opts = "".join([f"<option {'selected' if s==(g1.get('side') or '') else ''}>{s}</option>" for s in GUEST_SIDE_OPTIONS])
+    checked_visited = "checked" if safe_int(g1.get("visited", 0)) == 1 else ""
+    checked_stay = "checked" if safe_int(g1.get("stay_required", 0)) == 1 else ""
 
-    body = """
+    body = f"""
     <div class="card">
-      <h2 style="margin-top:0;">🏨 Venue / Rooms Check-in & Check-out</h2>
-      <p class="muted">Track room allocations and check-in/out status.</p>
-    </div>
-
-    <div class="card">
-      <h3 style="margin-top:0;">Room Entries</h3>
-      <table>
-        <tr><th>Room</th><th>Guest</th><th>Check-in</th><th>Check-out</th><th>Status</th><th>Assigned</th><th>Notes</th></tr>
-    """
-    for r1 in rows:
-        body += f"""
-        <tr>
-          <td><b>{r1.get('room_no') or ''}</b></td>
-          <td class="muted">{r1.get('guest_name') or ''}</td>
-          <td class="muted">{r1.get('checkin') or ''}</td>
-          <td class="muted">{r1.get('checkout') or ''}</td>
-          <td><span class="tag">{r1.get('status')}</span></td>
-          <td class="muted">{r1.get('assigned_to') or ''}</td>
-          <td class="muted">{r1.get('notes') or ''}</td>
-        </tr>
-        """
-    body += "</table></div>"
-
-    if is_admin(role):
-        opts = "".join([f"<option>{s}</option>" for s in STATUS_OPTIONS])
-        body += f"""
-        <div class="card">
-          <h3 style="margin-top:0;">➕ Add Room Entry (Admin)</h3>
-          <form method="post">
-            <div class="row">
-              <div class="col">
-                <label>Room No</label>
-                <input name="room_no" placeholder="e.g., 101 / A-12">
-              </div>
-              <div class="col">
-                <label>Guest Name</label>
-                <input name="guest_name" placeholder="Guest name (optional)">
-              </div>
-            </div>
-
-            <div class="row">
-              <div class="col">
-                <label>Check-in</label>
-                <input name="checkin" placeholder="e.g., 19-Feb 11:00 AM">
-              </div>
-              <div class="col">
-                <label>Check-out</label>
-                <input name="checkout" placeholder="e.g., 21-Feb 09:00 AM">
-              </div>
-            </div>
-
-            <div class="row">
-              <div class="col">
-                <label>Status</label>
-                <select name="status">{opts}</select>
-              </div>
-              <div class="col">
-                <label>Assigned To</label>
-                <input name="assigned_to" placeholder="Vijay / Samdharsi / Tushar / Other">
-              </div>
-            </div>
-
-            <label>Notes</label>
-            <input name="notes" placeholder="Key handover / issues / remarks">
-
-            <button class="btn" type="submit">Add Room Entry</button>
-          </form>
+      <h2 style="margin-top:0;">✏️ Edit Guest</h2>
+      <form method="post">
+        <div class="row">
+          <div class="col">
+            <label>Side</label>
+            <select name="side">{side_opts}</select>
+          </div>
+          <div class="col">
+            <label>Name</label>
+            <input name="name" value="{g1.get('name','')}" required>
+          </div>
         </div>
-        """
-    else:
-        body += "<div class='card'><p class='muted'>You have view-only access.</p></div>"
 
+        <div class="row">
+          <div class="col">
+            <label>Relation</label>
+            <input name="relation" value="{g1.get('relation') or ''}">
+          </div>
+          <div class="col">
+            <label>Phone</label>
+            <input name="phone" value="{g1.get('phone') or ''}">
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="col">
+            <label><input type="checkbox" name="visited" {checked_visited}> Visited</label>
+          </div>
+          <div class="col">
+            <label><input type="checkbox" name="stay_required" {checked_stay}> Stay Required</label>
+          </div>
+        </div>
+
+        <label>Room No</label>
+        <input name="room_no" value="{g1.get('room_no') or ''}">
+
+        <label>Notes</label>
+        <textarea name="notes">{g1.get('notes') or ''}</textarea>
+
+        <button class="btn" type="submit">Save</button>
+        <a class="btn2" href="{url_for('guests')}">Cancel</a>
+      </form>
+    </div>
+    """
     return render(body)
 
 
-# ------------------------- VENDORS -------------------------
+@app.route("/guests/<int:guest_id>/delete")
+def delete_guest(guest_id):
+    r = require_login()
+    if r:
+        return r
+
+    user = current_user()
+    if not can_delete(user["role"]):
+        abort(403)
+
+    db_exec(f"DELETE FROM guests WHERE id={_ph()}", (guest_id,))
+    flash("Guest deleted 🗑️")
+    return redirect(url_for("guests"))
+
+
+# ==========================================================
+# VENDORS (Edit / Delete)
+# ==========================================================
 @app.route("/vendors", methods=["GET", "POST"])
 def vendors():
     r = require_login()
@@ -1101,7 +848,8 @@ def vendors():
 
     if request.method == "POST":
         if not is_admin(role):
-            return render("<div class='card'><h2>Vendors</h2><p class='danger'>Only Admins can update vendors.</p></div>")
+            flash("Only Admins can add vendors.", "error")
+            return redirect(url_for("vendors"))
 
         category = request.form.get("category", "").strip()
         vendor_name = request.form.get("vendor_name", "").strip()
@@ -1110,262 +858,422 @@ def vendors():
         status = request.form.get("status", "Pending").strip()
         assigned_to = request.form.get("assigned_to", "").strip()
         notes = request.form.get("notes", "").strip()
-
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        db_exec("""
-            INSERT INTO vendors (category, vendor_name, contact_person, phone, status, assigned_to, notes, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (category, vendor_name, contact_person, phone, status, assigned_to, notes, now))
 
+        if not category:
+            flash("Category is required.", "error")
+            return redirect(url_for("vendors"))
+
+        db_exec(
+            f"INSERT INTO vendors (category, vendor_name, contact_person, phone, status, assigned_to, notes, updated_at) "
+            f"VALUES ({_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()})",
+            (category, vendor_name, contact_person, phone, status, assigned_to, notes, now),
+        )
+        flash("Vendor added ✅")
         return redirect(url_for("vendors"))
 
-    rows = db_query("SELECT * FROM vendors ORDER BY category ASC, id DESC")
+    rows = db_query("SELECT * FROM vendors ORDER BY category ASC, vendor_name ASC")
 
     body = """
     <div class="card">
-      <h2 style="margin-top:0;">🧑‍🔧 Vendor Management</h2>
-      <p class="muted">Decoration, Caterer, Lighting, Power backup, Photo/Videographer, Pandit, etc.</p>
-    </div>
-
-    <div class="card">
-      <h3 style="margin-top:0;">Vendor Entries</h3>
+      <h2 style="margin-top:0;">🧑‍🔧 Vendors</h2>
       <table>
-        <tr><th>Category</th><th>Vendor</th><th>Contact</th><th>Status</th><th>Assigned</th><th>Notes</th></tr>
+        <tr>
+          <th>Category</th><th>Vendor</th><th>Contact</th><th>Phone</th>
+          <th>Status</th><th>Assigned</th><th>Notes</th><th class="right">Actions</th>
+        </tr>
     """
     for v in rows:
-        contact = f"{v.get('contact_person') or ''} {v.get('phone') or ''}".strip()
         body += f"""
         <tr>
-          <td><b>{v.get('category')}</b></td>
-          <td class="muted">{v.get('vendor_name') or ''}</td>
-          <td class="muted">{contact}</td>
-          <td><span class="tag">{v.get('status')}</span></td>
+          <td><span class="tag">{v.get('category','')}</span></td>
+          <td><b>{v.get('vendor_name') or ''}</b></td>
+          <td class="muted">{v.get('contact_person') or ''}</td>
+          <td class="muted">{v.get('phone') or ''}</td>
+          <td><span class="tag">{v.get('status') or ''}</span></td>
           <td class="muted">{v.get('assigned_to') or ''}</td>
-          <td class="muted">{v.get('notes') or ''}</td>
+          <td class="muted">{(v.get('notes') or '')[:60]}</td>
+          <td class="right actions">
+            <a class="btn2 btnSmall" href="{url_for('edit_vendor', vendor_id=v['id'])}">Edit</a>
+            <a class="btnDanger btnSmall" href="{url_for('delete_vendor', vendor_id=v['id'])}" onclick="return confirm('Delete this vendor?')">Delete</a>
+          </td>
         </tr>
         """
     body += "</table></div>"
 
     if is_admin(role):
-        opts = "".join([f"<option>{s}</option>" for s in STATUS_OPTIONS])
+        cat_opts = "".join([f"<option>{c}</option>" for c in VENDOR_CATEGORIES])
+        status_opts = "".join([f"<option>{s}</option>" for s in STATUS_OPTIONS])
+
         body += f"""
         <div class="card">
-          <h3 style="margin-top:0;">➕ Add Vendor Entry (Admin)</h3>
+          <h3 style="margin-top:0;">➕ Add Vendor</h3>
           <form method="post">
             <label>Category</label>
-            <select name="category" required>
-              <option>Decoration</option>
-              <option>Caterer</option>
-              <option>Lighting</option>
-              <option>Power Backup</option>
-              <option>Outside Stalls</option>
-              <option>Photo/Videographer</option>
-              <option>Pandit Management</option>
-              <option>Other</option>
-            </select>
-
-            <label>Vendor Name</label>
-            <input name="vendor_name" placeholder="Vendor company/person">
+            <select name="category">{cat_opts}</select>
 
             <div class="row">
+              <div class="col">
+                <label>Vendor Name</label>
+                <input name="vendor_name">
+              </div>
               <div class="col">
                 <label>Contact Person</label>
-                <input name="contact_person" placeholder="Name">
-              </div>
-              <div class="col">
-                <label>Phone</label>
-                <input name="phone" placeholder="+91...">
+                <input name="contact_person">
               </div>
             </div>
 
             <div class="row">
               <div class="col">
-                <label>Status</label>
-                <select name="status">{opts}</select>
+                <label>Phone</label>
+                <input name="phone">
               </div>
               <div class="col">
-                <label>Assigned To</label>
-                <input name="assigned_to" placeholder="Vijay / Samdharsi / Tushar / Other">
+                <label>Status</label>
+                <select name="status">{status_opts}</select>
               </div>
             </div>
 
+            <label>Assigned To</label>
+            <input name="assigned_to" value="Vijay">
+
             <label>Notes</label>
-            <input name="notes" placeholder="Timing / requirements / remarks">
+            <textarea name="notes"></textarea>
 
             <button class="btn" type="submit">Add Vendor</button>
           </form>
         </div>
         """
     else:
-        body += "<div class='card'><p class='muted'>You have view-only access.</p></div>"
+        body += "<div class='card'><p class='muted'>Member view only.</p></div>"
 
     return render(body)
 
 
-# ------------------------- PURCHASES (Hidden from Members) -------------------------
-@app.route("/purchases", methods=["GET", "POST"])
-def purchases():
+@app.route("/vendors/<int:vendor_id>/edit", methods=["GET", "POST"])
+def edit_vendor(vendor_id):
     r = require_login()
     if r:
         return r
 
-    deny_members("purchases")
-
     user = current_user()
-    role = user["role"]
+    if not is_admin(user["role"]):
+        abort(403)
+
+    rows = db_query(f"SELECT * FROM vendors WHERE id={_ph()}", (vendor_id,))
+    if not rows:
+        flash("Vendor not found", "error")
+        return redirect(url_for("vendors"))
+    v = rows[0]
 
     if request.method == "POST":
-        if not is_admin(role):
-            return render("<div class='card'><h2>Purchases</h2><p class='danger'>Only Admins can add purchases.</p></div>")
-
         category = request.form.get("category", "").strip()
-        item = request.form.get("item", "").strip()
+        vendor_name = request.form.get("vendor_name", "").strip()
+        contact_person = request.form.get("contact_person", "").strip()
+        phone = request.form.get("phone", "").strip()
         status = request.form.get("status", "Pending").strip()
+        assigned_to = request.form.get("assigned_to", "").strip()
         notes = request.form.get("notes", "").strip()
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        if category and item:
-            db_exec("""
-                INSERT INTO purchases (category, item, status, notes, updated_at)
-                VALUES (?, ?, ?, ?, ?)
-            """, (category, item, status, notes, now))
+        db_exec(
+            f"UPDATE vendors SET category={_ph()}, vendor_name={_ph()}, contact_person={_ph()}, phone={_ph()}, status={_ph()}, assigned_to={_ph()}, notes={_ph()}, updated_at={_ph()} "
+            f"WHERE id={_ph()}",
+            (category, vendor_name, contact_person, phone, status, assigned_to, notes, now, vendor_id),
+        )
+        flash("Vendor updated ✅")
+        return redirect(url_for("vendors"))
 
-        return redirect(url_for("purchases"))
-
-    rows = db_query("SELECT * FROM purchases ORDER BY id DESC")
-
-    body = """
-    <div class="card">
-      <h2 style="margin-top:0;">🛍 Purchases (Hidden from Members)</h2>
-      <p class="muted">Admins can track purchases here.</p>
-      <table>
-        <tr><th>Category</th><th>Item</th><th>Status</th><th>Notes</th></tr>
-    """
-    for p in rows:
-        body += f"""
-        <tr>
-          <td><b>{p.get('category')}</b></td>
-          <td>{p.get('item')}</td>
-          <td><span class="tag">{p.get('status')}</span></td>
-          <td class="muted">{p.get('notes') or ''}</td>
-        </tr>
-        """
-    body += "</table></div>"
-
-    if is_admin(role):
-        opts = "".join([f"<option>{s}</option>" for s in STATUS_OPTIONS])
-        body += f"""
-        <div class="card">
-          <h3 style="margin-top:0;">➕ Add Purchase (Admin)</h3>
-          <form method="post">
-            <label>Category</label>
-            <select name="category">
-              <option>Clothes</option>
-              <option>Jewellery</option>
-              <option>Travel</option>
-              <option>Gifts</option>
-              <option>Misc</option>
-            </select>
-
-            <label>Item</label>
-            <input name="item" placeholder="e.g., Saree, Shoes, Ring" required>
-
-            <label>Status</label>
-            <select name="status">{opts}</select>
-
-            <label>Notes</label>
-            <input name="notes" placeholder="Optional notes...">
-
-            <button class="btn" type="submit">Add Purchase</button>
-          </form>
-        </div>
-        """
-    return render(body)
-
-
-# ------------------------- COMMERCIALS (Super Admin only) -------------------------
-@app.route("/commercials", methods=["GET", "POST"])
-def commercials():
-    r = require_login()
-    if r:
-        return r
-
-    user = current_user()
-    if user["role"] != "SUPER_ADMIN":
-        return render("<div class='card'><h2>Commercials</h2><p class='danger'>Access denied.</p></div>")
-
-    if request.method == "POST":
-        category = request.form.get("category", "").strip()
-        amount = request.form.get("amount", "").strip()
-        notes = request.form.get("notes", "").strip()
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        try:
-            amt = float(amount)
-        except:
-            amt = None
-
-        if category and amt is not None:
-            db_exec("""
-                INSERT INTO commercials (category, amount, notes, updated_at)
-                VALUES (?, ?, ?, ?)
-            """, (category, amt, notes, now))
-
-        return redirect(url_for("commercials"))
-
-    rows = db_query("SELECT * FROM commercials ORDER BY id DESC")
-    total = sum([r.get("amount", 0) for r in rows]) if rows else 0
+    cat_opts = "".join([f"<option {'selected' if c==(v.get('category') or '') else ''}>{c}</option>" for c in VENDOR_CATEGORIES])
+    status_opts = "".join([f"<option {'selected' if s==(v.get('status') or '') else ''}>{s}</option>" for s in STATUS_OPTIONS])
 
     body = f"""
     <div class="card">
-      <h2 style="margin-top:0;">💰 Commercials (Super Admin Only)</h2>
-      <p class="muted">Hidden from admins and members.</p>
-      <table>
-        <tr><th>Category</th><th class="right">Amount</th><th>Notes</th></tr>
-    """
-    for c in rows:
-        body += f"""
-        <tr>
-          <td><b>{c.get('category')}</b></td>
-          <td class="right">₹ {c.get('amount')}</td>
-          <td class="muted">{c.get('notes') or ''}</td>
-        </tr>
-        """
-    body += f"""
-      </table>
-      <h3 style="margin-top:14px;">Total: ₹ {total}</h3>
-    </div>
-
-    <div class="card">
-      <h3 style="margin-top:0;">➕ Add Commercial Entry</h3>
+      <h2 style="margin-top:0;">✏️ Edit Vendor</h2>
       <form method="post">
         <label>Category</label>
-        <input name="category" placeholder="e.g., Venue Advance" required>
-        <label>Amount</label>
-        <input name="amount" placeholder="250000" required>
+        <select name="category">{cat_opts}</select>
+
+        <div class="row">
+          <div class="col">
+            <label>Vendor Name</label>
+            <input name="vendor_name" value="{v.get('vendor_name') or ''}">
+          </div>
+          <div class="col">
+            <label>Contact Person</label>
+            <input name="contact_person" value="{v.get('contact_person') or ''}">
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="col">
+            <label>Phone</label>
+            <input name="phone" value="{v.get('phone') or ''}">
+          </div>
+          <div class="col">
+            <label>Status</label>
+            <select name="status">{status_opts}</select>
+          </div>
+        </div>
+
+        <label>Assigned To</label>
+        <input name="assigned_to" value="{v.get('assigned_to') or ''}">
+
         <label>Notes</label>
-        <input name="notes" placeholder="Optional notes...">
-        <button class="btn" type="submit">Add</button>
+        <textarea name="notes">{v.get('notes') or ''}</textarea>
+
+        <button class="btn" type="submit">Save</button>
+        <a class="btn2" href="{url_for('vendors')}">Cancel</a>
       </form>
     </div>
     """
     return render(body)
 
 
+@app.route("/vendors/<int:vendor_id>/delete")
+def delete_vendor(vendor_id):
+    r = require_login()
+    if r:
+        return r
+
+    user = current_user()
+    if not can_delete(user["role"]):
+        abort(403)
+
+    db_exec(f"DELETE FROM vendors WHERE id={_ph()}", (vendor_id,))
+    flash("Vendor deleted 🗑️")
+    return redirect(url_for("vendors"))
+
+
+# ==========================================================
+# VENUE / ROOMS (Add / Edit / Delete)
+# ==========================================================
+@app.route("/venue_rooms", methods=["GET", "POST"])
+def venue_rooms():
+    r = require_login()
+    if r:
+        return r
+
+    user = current_user()
+    role = user["role"]
+
+    if request.method == "POST":
+        if not is_admin(role):
+            flash("Only Admins can add room entries.", "error")
+            return redirect(url_for("venue_rooms"))
+
+        room_no = request.form.get("room_no", "").strip()
+        guest_name = request.form.get("guest_name", "").strip()
+        checkin = request.form.get("checkin", "").strip()
+        checkout = request.form.get("checkout", "").strip()
+        status = request.form.get("status", "Pending").strip()
+        assigned_to = request.form.get("assigned_to", "").strip()
+        notes = request.form.get("notes", "").strip()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        db_exec(
+            f"INSERT INTO venue_rooms (room_no, guest_name, checkin, checkout, status, assigned_to, notes, updated_at) "
+            f"VALUES ({_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()},{_ph()})",
+            (room_no, guest_name, checkin, checkout, status, assigned_to, notes, now),
+        )
+        flash("Room entry added ✅")
+        return redirect(url_for("venue_rooms"))
+
+    rows = db_query("SELECT * FROM venue_rooms ORDER BY room_no ASC, guest_name ASC")
+
+    body = """
+    <div class="card">
+      <h2 style="margin-top:0;">🏨 Venue / Rooms</h2>
+      <table>
+        <tr>
+          <th>Room</th><th>Guest</th><th>Check-in</th><th>Check-out</th>
+          <th>Status</th><th>Assigned</th><th>Notes</th><th class="right">Actions</th>
+        </tr>
+    """
+    for r1 in rows:
+        body += f"""
+        <tr>
+          <td><b>{r1.get('room_no') or ''}</b></td>
+          <td>{r1.get('guest_name') or ''}</td>
+          <td class="muted">{r1.get('checkin') or ''}</td>
+          <td class="muted">{r1.get('checkout') or ''}</td>
+          <td><span class="tag">{r1.get('status') or ''}</span></td>
+          <td class="muted">{r1.get('assigned_to') or ''}</td>
+          <td class="muted">{(r1.get('notes') or '')[:60]}</td>
+          <td class="right actions">
+            <a class="btn2 btnSmall" href="{url_for('edit_room', room_id=r1['id'])}">Edit</a>
+            <a class="btnDanger btnSmall" href="{url_for('delete_room', room_id=r1['id'])}" onclick="return confirm('Delete this room entry?')">Delete</a>
+          </td>
+        </tr>
+        """
+    body += "</table></div>"
+
+    if is_admin(role):
+        status_opts = "".join([f"<option>{s}</option>" for s in STATUS_OPTIONS])
+        body += f"""
+        <div class="card">
+          <h3 style="margin-top:0;">➕ Add Room Entry</h3>
+          <form method="post">
+            <div class="row">
+              <div class="col">
+                <label>Room No</label>
+                <input name="room_no">
+              </div>
+              <div class="col">
+                <label>Guest Name</label>
+                <input name="guest_name">
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="col">
+                <label>Check-in</label>
+                <input name="checkin" placeholder="2026-02-18 12:00">
+              </div>
+              <div class="col">
+                <label>Check-out</label>
+                <input name="checkout" placeholder="2026-02-21 10:00">
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="col">
+                <label>Status</label>
+                <select name="status">{status_opts}</select>
+              </div>
+              <div class="col">
+                <label>Assigned To</label>
+                <input name="assigned_to" value="Vijay">
+              </div>
+            </div>
+
+            <label>Notes</label>
+            <textarea name="notes"></textarea>
+
+            <button class="btn" type="submit">Add Room Entry</button>
+          </form>
+        </div>
+        """
+    else:
+        body += "<div class='card'><p class='muted'>Member view only.</p></div>"
+
+    return render(body)
+
+
+@app.route("/venue_rooms/<int:room_id>/edit", methods=["GET", "POST"])
+def edit_room(room_id):
+    r = require_login()
+    if r:
+        return r
+
+    user = current_user()
+    if not is_admin(user["role"]):
+        abort(403)
+
+    rows = db_query(f"SELECT * FROM venue_rooms WHERE id={_ph()}", (room_id,))
+    if not rows:
+        flash("Room entry not found", "error")
+        return redirect(url_for("venue_rooms"))
+    r1 = rows[0]
+
+    if request.method == "POST":
+        room_no = request.form.get("room_no", "").strip()
+        guest_name = request.form.get("guest_name", "").strip()
+        checkin = request.form.get("checkin", "").strip()
+        checkout = request.form.get("checkout", "").strip()
+        status = request.form.get("status", "Pending").strip()
+        assigned_to = request.form.get("assigned_to", "").strip()
+        notes = request.form.get("notes", "").strip()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        db_exec(
+            f"UPDATE venue_rooms SET room_no={_ph()}, guest_name={_ph()}, checkin={_ph()}, checkout={_ph()}, status={_ph()}, assigned_to={_ph()}, notes={_ph()}, updated_at={_ph()} "
+            f"WHERE id={_ph()}",
+            (room_no, guest_name, checkin, checkout, status, assigned_to, notes, now, room_id),
+        )
+        flash("Room entry updated ✅")
+        return redirect(url_for("venue_rooms"))
+
+    status_opts = "".join([f"<option {'selected' if s==(r1.get('status') or '') else ''}>{s}</option>" for s in STATUS_OPTIONS])
+
+    body = f"""
+    <div class="card">
+      <h2 style="margin-top:0;">✏️ Edit Room Entry</h2>
+      <form method="post">
+        <div class="row">
+          <div class="col">
+            <label>Room No</label>
+            <input name="room_no" value="{r1.get('room_no') or ''}">
+          </div>
+          <div class="col">
+            <label>Guest Name</label>
+            <input name="guest_name" value="{r1.get('guest_name') or ''}">
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="col">
+            <label>Check-in</label>
+            <input name="checkin" value="{r1.get('checkin') or ''}">
+          </div>
+          <div class="col">
+            <label>Check-out</label>
+            <input name="checkout" value="{r1.get('checkout') or ''}">
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="col">
+            <label>Status</label>
+            <select name="status">{status_opts}</select>
+          </div>
+          <div class="col">
+            <label>Assigned To</label>
+            <input name="assigned_to" value="{r1.get('assigned_to') or ''}">
+          </div>
+        </div>
+
+        <label>Notes</label>
+        <textarea name="notes">{r1.get('notes') or ''}</textarea>
+
+        <button class="btn" type="submit">Save</button>
+        <a class="btn2" href="{url_for('venue_rooms')}">Cancel</a>
+      </form>
+    </div>
+    """
+    return render(body)
+
+
+@app.route("/venue_rooms/<int:room_id>/delete")
+def delete_room(room_id):
+    r = require_login()
+    if r:
+        return r
+
+    user = current_user()
+    if not can_delete(user["role"]):
+        abort(403)
+
+    db_exec(f"DELETE FROM venue_rooms WHERE id={_ph()}", (room_id,))
+    flash("Room entry deleted 🗑️")
+    return redirect(url_for("venue_rooms"))
+
+
 # ----------------------------------------------------------
-# Error handler
+# Errors
 # ----------------------------------------------------------
 @app.errorhandler(403)
 def forbidden(e):
     return render("<div class='card'><h2>403 Forbidden</h2><p class='danger'>You do not have access to this section.</p></div>"), 403
 
 
+@app.errorhandler(404)
+def not_found(e):
+    return render("<div class='card'><h2>404 Not Found</h2><p class='muted'>Page not found.</p></div>"), 404
+
+
 # ----------------------------------------------------------
-# Run
+# Main
 # ----------------------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
-
-
-
-
